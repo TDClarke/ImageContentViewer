@@ -3,14 +3,22 @@ package uk.ac.open.ImageContentViewer;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.geom.AffineTransform;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.NoninvertibleTransformException;
 import java.awt.geom.Path2D;
+import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import java.util.HashMap;
 import java.util.Map;
@@ -276,6 +284,7 @@ public class ChannelImagePanel extends JPanel {
         toolbar.add(zoomOutButton);
         toolbar.add(zoomInButton);
         toolbar.add(zoomResetButton);
+        MagnifierControls.addTo(toolbar, canvas);
         add(toolbar, BorderLayout.NORTH);
     }
 
@@ -623,8 +632,151 @@ public class ChannelImagePanel extends JPanel {
         private boolean autoFit = true;
         private Runnable onChange = () -> { };
 
+        // magnifier
+        private static final int LENS_SIZE = 200;
+        private boolean magnifierOn = false;
+        private int magnification = 4;
+        private int magnifierEnhancement = MagnifierControls.MODE_NONE;
+        private Point mouse = null;
+
         ImageCanvas() {
             setBackground(Color.BLACK);
+            MouseAdapter mouseTracker = new MouseAdapter() {
+                @Override
+                public void mouseMoved(MouseEvent e) {
+                    moveLens(e.getPoint());
+                }
+
+                @Override
+                public void mouseDragged(MouseEvent e) {
+                    moveLens(e.getPoint());
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    moveLens(null);
+                }
+            };
+            addMouseMotionListener(mouseTracker);
+            addMouseListener(mouseTracker);
+        }
+
+        void setMagnifierEnabled(boolean on) {
+            magnifierOn = on;
+            setCursor(on ? Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR) : Cursor.getDefaultCursor());
+            repaint();
+        }
+
+        void setMagnification(int m) {
+            magnification = Math.max(2, Math.min(8, m));
+            repaint();
+        }
+
+        void setMagnifierEnhancement(int mode) {
+            magnifierEnhancement = mode;
+            repaint();
+        }
+
+        private Rectangle lensBounds(Point p) {
+            int r = LENS_SIZE / 2 + 6;
+            return new Rectangle(p.x - r, p.y - r, 2 * r, 2 * r);
+        }
+
+        private void moveLens(Point p) {
+            Point old = mouse;
+            mouse = p;
+            if (!magnifierOn) {
+                return;
+            }
+            if (old != null) {
+                Rectangle r = lensBounds(old);
+                repaint(r.x, r.y, r.width, r.height);
+            }
+            if (p != null) {
+                Rectangle r = lensBounds(p);
+                repaint(r.x, r.y, r.width, r.height);
+            }
+        }
+
+        /** Image coordinates to component coordinates (same transform paintComponent uses). */
+        private AffineTransform imageToComponent(double z) {
+            AffineTransform at = new AffineTransform();
+            at.translate(getWidth() / 2.0, getHeight() / 2.0);
+            at.rotate(Math.toRadians(rotation));
+            at.scale(z, z);
+            at.translate(-image.getWidth() / 2.0, -image.getHeight() / 2.0);
+            return at;
+        }
+
+        /** Draws the magnifying lens at the mouse position. */
+        private void paintMagnifier(Graphics2D base) {
+            if (!magnifierOn || mouse == null || image == null) {
+                return;
+            }
+            double z = effectiveZoom();
+            Point2D ip;
+            try {
+                ip = imageToComponent(z).inverseTransform(new Point2D.Double(mouse.x, mouse.y), null);
+            } catch (NoninvertibleTransformException ex) {
+                return;
+            }
+            double ix = ip.getX();
+            double iy = ip.getY();
+            int iw = image.getWidth();
+            int ih = image.getHeight();
+            if (ix < 0 || iy < 0 || ix >= iw || iy >= ih) {
+                return; // pointer is outside the image
+            }
+
+            double scale = z * magnification;   // component pixels per image pixel inside the lens
+            // Part of the image the lens can show (the view may be rotated, so use a square that covers it).
+            double reach = (LENS_SIZE / 2.0) / scale * Math.sqrt(2) + 2;
+            int x0 = Math.max(0, (int) Math.floor(ix - reach));
+            int y0 = Math.max(0, (int) Math.floor(iy - reach));
+            int x1 = Math.min(iw, (int) Math.ceil(ix + reach));
+            int y1 = Math.min(ih, (int) Math.ceil(iy + reach));
+            if (x1 <= x0 || y1 <= y0) {
+                return;
+            }
+            BufferedImage region = image.getSubimage(x0, y0, x1 - x0, y1 - y0);
+            BufferedImage shown = magnifierEnhancement == MagnifierControls.MODE_NONE
+                    ? region : MagnifierControls.enhance(region, magnifierEnhancement);
+
+            Ellipse2D lens = new Ellipse2D.Double(mouse.x - LENS_SIZE / 2.0, mouse.y - LENS_SIZE / 2.0,
+                    LENS_SIZE, LENS_SIZE);
+            Graphics2D g = (Graphics2D) base.create();
+            try {
+                g.clip(lens);
+                g.setColor(Color.BLACK);
+                g.fill(lens);
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                        RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                g.translate(mouse.x, mouse.y);
+                g.rotate(Math.toRadians(rotation));
+                g.scale(scale, scale);
+                g.translate(-(ix - x0), -(iy - y0));
+                g.drawImage(shown, 0, 0, null);
+            } finally {
+                g.dispose();
+            }
+
+            Graphics2D b = (Graphics2D) base.create();
+            try {
+                b.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                b.setStroke(new BasicStroke(3.5f));
+                b.setColor(Color.BLACK);
+                b.draw(lens);
+                b.setStroke(new BasicStroke(1.5f));
+                b.setColor(Color.WHITE);
+                b.draw(lens);
+                // small cross-hair at the centre
+                b.setStroke(new BasicStroke(1f));
+                b.setColor(new Color(255, 255, 255, 170));
+                b.drawLine(mouse.x - 6, mouse.y, mouse.x + 6, mouse.y);
+                b.drawLine(mouse.x, mouse.y - 6, mouse.x, mouse.y + 6);
+            } finally {
+                b.dispose();
+            }
         }
 
         void setOnChange(Runnable r) {
@@ -753,6 +905,7 @@ public class ChannelImagePanel extends JPanel {
             } finally {
                 g2.dispose();
             }
+            paintMagnifier((Graphics2D) g);
         }
 
         @Override

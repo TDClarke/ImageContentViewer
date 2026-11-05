@@ -157,6 +157,7 @@ public class LuminanceGradientPanel extends JPanel {
         toolbar.add(zoomOutButton);
         toolbar.add(zoomInButton);
         toolbar.add(zoomResetButton);
+        MagnifierControls.addTo(toolbar, canvas);
         add(toolbar, BorderLayout.NORTH);
     }
 

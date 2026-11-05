@@ -2,5 +2,5 @@ Manifest-Version: 1.0
 AutoUpdate-Show-In-Client: true
 OpenIDE-Module: uk.ac.open.ImageContentViewer
 OpenIDE-Module-Localizing-Bundle: uk/ac/open/ImageContentViewer/Bundle.properties
-OpenIDE-Module-Specification-Version: 1.0.12
+OpenIDE-Module-Specification-Version: 1.1.0
 
