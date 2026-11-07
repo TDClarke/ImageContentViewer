@@ -8,7 +8,7 @@ Autopsy homepage: https://sleuthkit.org/autopsy/
 Screenshot
 ----------
 
-![Plugin Screenshot](imagecontentviewer-screenshot.png?raw=true)
+![Plugin Screenshot](/images/imagecontentviewer-screenshot.png?raw=true)
 
 Features
 --------
